@@ -21,7 +21,7 @@ from yolov6.utils.nms import non_max_suppression
 from yolov6.utils.torch_utils import get_model_info
 
 class Inferer:
-    def __init__(self, source, webcam, webcam_addr, weights, device, yaml, img_size, half):
+    def __init__(self, source, webcam, webcam_addr, weights, device, yaml, img_size, half, imgs):
 
         self.__dict__.update(locals())
 
@@ -35,6 +35,7 @@ class Inferer:
         self.class_names = load_yaml(yaml)['names']
         self.img_size = self.check_img_size(self.img_size, s=self.stride)  # check image size
         self.half = half
+        self.imgs = []
 
         # Switch model to deploy status
         self.model_switch(self.model.model, self.img_size)
@@ -52,7 +53,7 @@ class Inferer:
         # Load data
         self.webcam = webcam
         self.webcam_addr = webcam_addr
-        self.files = LoadData(source, webcam, webcam_addr)
+        self.files = LoadData(imgs, source,  webcam, webcam_addr)
         self.source = source
 
 
@@ -68,6 +69,8 @@ class Inferer:
     def infer(self, conf_thres, iou_thres, classes, agnostic_nms, max_det, save_dir, save_txt, save_img, hide_labels, hide_conf, view_img=True):
         ''' Model Inference and results visualization '''
         vid_path, vid_writer, windows = None, None, []
+        img_map = []
+        img_maps= []
         fps_calculator = CalcFPS()
         for img_src, img_path, vid_cap in tqdm(self.files):
             img, img_src = self.process_image(img_src, self.img_size, self.stride, self.half)
@@ -78,6 +81,9 @@ class Inferer:
             t1 = time.time()
             pred_results = self.model(img)
             det = non_max_suppression(pred_results, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)[0]
+            # print(det)
+            # img_map.append(det)
+            # print(img_map)
             t2 = time.time()
 
             if self.webcam:
@@ -87,7 +93,7 @@ class Inferer:
                 # Create output files in nested dirs that mirrors the structure of the images' dirs
                 rel_path = osp.relpath(osp.dirname(img_path), osp.dirname(self.source))
                 save_path = osp.join(save_dir, rel_path, osp.basename(img_path))  # im.jpg
-                txt_path = osp.join(save_dir, rel_path, 'labels', osp.splitext(osp.basename(img_path))[0])
+                txt_path = osp.join(save_dir,  'labels', osp.splitext(osp.basename(img_path))[0])
                 os.makedirs(osp.join(save_dir, rel_path), exist_ok=True)
 
             gn = torch.tensor(img_src.shape)[[1, 0, 1, 0]]  # normalization gain whwh
@@ -103,16 +109,23 @@ class Inferer:
                     if save_txt:  # Write to file
                         xywh = (self.box_convert(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
                         line = (cls, *xywh, conf)
-                        with open(txt_path + '.txt', 'a') as f:
-                            f.write(('%g ' * len(line)).rstrip() % line + '\n')
+                        img_map.append(line[1:5])
+                       
+                        # with open(txt_path + '.txt', 'a') as f:
+                        #     f.write(('%g ' * len(line)).rstrip() % line + '\n')
 
                     if save_img:
                         class_num = int(cls)  # integer class
                         label = None if hide_labels else (self.class_names[class_num] if hide_conf else f'{self.class_names[class_num]} {conf:.2f}')
 
                         self.plot_box_and_label(img_ori, max(round(sum(img_ori.shape) / 2 * 0.003), 2), xyxy, label, color=self.generate_colors(class_num, True))
+              
 
+                img_maps.append(img_map)
+                img_map = []
                 img_src = np.asarray(img_ori)
+
+
 
             # FPS counter
             fps_calculator.update(1.0 / (t2 - t1))
@@ -155,6 +168,7 @@ class Inferer:
                         save_path = str(Path(save_path).with_suffix('.mp4'))  # force *.mp4 suffix on results videos
                         vid_writer = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
                     vid_writer.write(img_src)
+        return img_maps
 
     @staticmethod
     def process_image(img_src, img_size, stride, half):
@@ -241,11 +255,11 @@ class Inferer:
         cv2.rectangle(image, p1, p2, color, thickness=lw, lineType=cv2.LINE_AA)
         if label:
             tf = max(lw - 1, 1)  # font thickness
-            w, h = cv2.getTextSize(label, 0, fontScale=lw / 3, thickness=tf)[0]  # text width, height
+            w, h = cv2.getTextSize(label, 0, fontScale=lw / 10, thickness=tf)[0]  # text width, height
             outside = p1[1] - h - 3 >= 0  # label fits outside box
             p2 = p1[0] + w, p1[1] - h - 3 if outside else p1[1] + h + 3
             cv2.rectangle(image, p1, p2, color, -1, cv2.LINE_AA)  # filled
-            cv2.putText(image, label, (p1[0], p1[1] - 2 if outside else p1[1] + h + 2), font, lw / 3, txt_color,
+            cv2.putText(image, label, (p1[0], p1[1] - 2 if outside else p1[1] + h + 2), font, lw / 6, txt_color,
                         thickness=tf, lineType=cv2.LINE_AA)
 
     @staticmethod
